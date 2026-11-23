@@ -1,28 +1,12 @@
+import time
+import akshare as ak
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 1. 股票監察名單 (可自行增減港股代號)
-# ==========================================
-WATCHLIST = {
-    "1810.HK": "小米集團-W",
-    "1888.HK": "建滔積層板",
-    "0700.HK": "騰訊控股",
-    "9988.HK": "阿里巴巴-W",
-    "3690.HK": "美團-W",
-    "1211.HK": "比亞迪股份",
-    "0981.HK": "中芯國際",
-    "2800.HK": "盈富基金",
-    "3033.HK": "南方恒生科技",
-    "9660.HK": "地平線機械人",
-    "1686.HK": "新意網集團",
-    "2858.HK": "易鑫集團",
-}
-
-# ==========================================
-# 2. 策略參數 (與你的 Pine Script 完全一致)
+# 1. 策略參數 (與 Pine Script 一致)
 # ==========================================
 MA_LEN1 = 150
 MA_LEN2 = 200
@@ -32,25 +16,50 @@ SLOPE_LOOK = 10
 USE_FAST_TP = True
 BIAS_PCT = 35.0
 FAST_TP_LEN = 20
+BATCH_SIZE = 80  # 每次批量下載股票數量
+
+# 備用名單 (萬一外部接口暫時維護時使用)
+FALLBACK_LIST = {
+    "1810.HK": "小米集團-W", "1888.HK": "建滔積層板", "0700.HK": "騰訊控股",
+    "9988.HK": "阿里巴巴-W", "3690.HK": "美團-W", "1211.HK": "比亞迪股份",
+    "0981.HK": "中芯國際", "2800.HK": "盈富基金", "3033.HK": "南方恒生科技",
+    "9660.HK": "地平線機械人", "1686.HK": "新意網集團", "2858.HK": "易鑫集團",
+}
 
 
-def analyze_stock(ticker, name):
+def get_ggt_watchlist():
+    """自動抓取最新港股通成分股並轉換為 Yahoo Finance 格式 (如 00700 -> 0700.HK)"""
     try:
-        # 抓取 2 年日線資料，確保 200 天均線計算準確
-        df = yf.Ticker(ticker).history(period="2y")
-        if df.empty or len(df) < MA_LEN2 + 15:
+        df_ggt = ak.stock_hk_ggt_components_em()
+        watchlist = {}
+        for _, row in df_ggt.iterrows():
+            code_raw = str(row["代码"]).strip().zfill(5)
+            # Yahoo Finance 港股為 4 位數 (去掉開頭的 0)
+            yf_ticker = (code_raw[1:] if code_raw.startswith("0") else code_raw) + ".HK"
+            name = str(row["名称"]).strip()
+            watchlist[yf_ticker] = name
+        print(f"成功獲取港股通名單，共 {len(watchlist)} 隻股票。")
+        return watchlist
+    except Exception as e:
+        print(f"獲取港股通名單失敗 ({e})，改用備用名單。")
+        return FALLBACK_LIST
+
+
+def analyze_dataframe(ticker, name, df):
+    """套用 150/200 支持阻力帶 + 急升止盈狀態機"""
+    try:
+        df = df.dropna(subset=["Close", "High", "Low"]).copy()
+        if len(df) < MA_LEN2 + 15:
             return None
 
         close = df["Close"]
         high = df["High"]
         low = df["Low"]
 
-        # 計算 150 / 200 SMA 與 20 EMA
         df["ma1"] = close.rolling(MA_LEN1).mean()
         df["ma2"] = close.rolling(MA_LEN2).mean()
         df["ema_tp"] = close.ewm(span=FAST_TP_LEN, adjust=False).mean()
 
-        # 計算 ATR(14) (Wilder's smoothing，對齊 TradingView ta.atr)
         prev_close = close.shift(1)
         tr = pd.concat([
             high - low,
@@ -59,7 +68,6 @@ def analyze_stock(ticker, name):
         ], axis=1).max(axis=1)
         df["atr"] = tr.ewm(alpha=1/14, adjust=False).mean()
 
-        # 支持/阻力帶與緩衝區
         df["band_top"] = np.maximum(df["ma1"], df["ma2"])
         df["band_bot"] = np.minimum(df["ma1"], df["ma2"])
         df["buy_thresh"] = df["band_top"] + df["atr"] * ATR_MULT
@@ -67,28 +75,30 @@ def analyze_stock(ticker, name):
         df["slope_ok"] = df["ma1"] >= df["ma1"].shift(SLOPE_LOOK) if USE_SLOPE else True
         df["bias"] = (close - df["ma1"]) / df["ma1"] * 100
 
-        # 逐日執行狀態機 (完全對齊 Pine Script 邏輯)
         trend = 0
         high_bias_hit = False
         last_signal = "無"
         last_signal_date = "-"
 
-        for i in range(MA_LEN2, len(df)):
-            c = df["Close"].iloc[i]
-            prev_c = df["Close"].iloc[i - 1]
-            ema_curr = df["ema_tp"].iloc[i]
-            ema_prev = df["ema_tp"].iloc[i - 1]
-            b_thresh = df["buy_thresh"].iloc[i]
-            s_thresh = df["sell_thresh"].iloc[i]
-            s_ok = df["slope_ok"].iloc[i]
-            bias_val = df["bias"].iloc[i]
-            dt_str = df.index[i].strftime("%Y-%m-%d")
+        closes = df["Close"].values
+        emas = df["ema_tp"].values
+        b_threshs = df["buy_thresh"].values
+        s_threshs = df["sell_thresh"].values
+        s_oks = df["slope_ok"].values
+        biases = df["bias"].values
+        dates = df.index.strftime("%Y-%m-%d").values
 
-            if trend == 1 and bias_val >= BIAS_PCT:
+        for i in range(MA_LEN2, len(df)):
+            c = closes[i]
+            prev_c = closes[i - 1]
+            ema_curr = emas[i]
+            ema_prev = emas[i - 1]
+
+            if trend == 1 and biases[i] >= BIAS_PCT:
                 high_bias_hit = True
 
-            buy_cond = (c > b_thresh) and s_ok and (trend != 1)
-            normal_sell = (c < s_thresh) and (trend == 1)
+            buy_cond = (c > b_threshs[i]) and s_oks[i] and (trend != 1)
+            normal_sell = (c < s_threshs[i]) and (trend == 1)
             crossunder_ema = (prev_c >= ema_prev) and (c < ema_curr)
             fast_tp_sell = USE_FAST_TP and (trend == 1) and high_bias_hit and crossunder_ema
 
@@ -96,48 +106,79 @@ def analyze_stock(ticker, name):
                 trend = 1
                 high_bias_hit = False
                 last_signal = "買入"
-                last_signal_date = dt_str
+                last_signal_date = dates[i]
             elif normal_sell:
                 trend = -1
                 high_bias_hit = False
                 last_signal = "賣出"
-                last_signal_date = dt_str
+                last_signal_date = dates[i]
             elif fast_tp_sell:
                 trend = -1
                 high_bias_hit = False
                 last_signal = "急升止盈"
-                last_signal_date = dt_str
+                last_signal_date = dates[i]
 
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
-        chg_pct = (latest["Close"] - prev["Close"]) / prev["Close"] * 100
-        latest_date = df.index[-1].strftime("%Y-%m-%d")
+        latest_price = closes[-1]
+        prev_price = closes[-2]
+        chg_pct = (latest_price - prev_price) / prev_price * 100
+        latest_date = dates[-1]
 
         return {
             "ticker": ticker,
             "name": name,
-            "price": latest["Close"],
-            "chg_pct": chg_pct,
+            "price": float(latest_price),
+            "chg_pct": float(chg_pct),
             "trend": trend,
             "high_bias_hit": high_bias_hit,
-            "bias": latest["bias"],
-            "band_top": latest["band_top"],
-            "band_bot": latest["band_bot"],
-            "ema_tp": latest["ema_tp"],
+            "bias": float(biases[-1]),
+            "band_top": float(df["band_top"].iloc[-1]),
+            "band_bot": float(df["band_bot"].iloc[-1]),
+            "ema_tp": float(emas[-1]),
             "last_signal": last_signal,
             "last_signal_date": last_signal_date,
             "is_today_signal": (last_signal_date == latest_date),
         }
-    except Exception as e:
-        print(f"Error processing {ticker}: {e}")
+    except Exception:
         return None
+
+
+def scan_all_stocks(watchlist):
+    tickers = list(watchlist.keys())
+    results = []
+
+    for i in range(0, len(tickers), BATCH_SIZE):
+        batch = tickers[i:i + BATCH_SIZE]
+        print(f"正在下載第 {i+1} ~ {min(i+BATCH_SIZE, len(tickers))} 隻股票...")
+        try:
+            data = yf.download(batch, period="2y", group_by="ticker", threads=True, progress=False)
+            for t in batch:
+                if len(batch) == 1:
+                    df_t = data
+                elif t in data.columns.get_level_values(0):
+                    df_t = data[t]
+                else:
+                    continue
+                res = analyze_dataframe(t, watchlist[t], df_t)
+                if res:
+                    results.append(res)
+        except Exception as e:
+            print(f"批次下載發生錯誤: {e}")
+        time.sleep(1)  # 稍微停頓避免觸發頻率限制
+
+    return results
 
 
 def generate_html(results):
     hkt = timezone(timedelta(hours=8))
     now_str = datetime.now(hkt).strftime("%Y-%m-%d %H:%M HKT")
 
-    # 排序：今日有訊號優先 -> 多頭持倉優先 -> 乖離率高至低
+    # 統計數據
+    total_cnt = len(results)
+    today_buy = sum(1 for r in results if r["is_today_signal"] and r["last_signal"] == "買入")
+    today_sell = sum(1 for r in results if r["is_today_signal"] and r["last_signal"] in ["賣出", "急升止盈"])
+    bull_cnt = sum(1 for r in results if r["trend"] == 1)
+
+    # 排序：今日訊號 -> 多頭持倉 -> 乖離率由高至低
     results.sort(key=lambda x: (not x["is_today_signal"], x["trend"] != 1, -x["bias"]))
 
     rows_html = ""
@@ -145,6 +186,7 @@ def generate_html(results):
         chg_color = "#00c853" if r["chg_pct"] >= 0 else "#ff1744"
         chg_sign = "+" if r["chg_pct"] >= 0 else ""
 
+        status_key = "bull" if r["trend"] == 1 else ("bear" if r["trend"] == -1 else "neutral")
         if r["trend"] == 1:
             status_badge = '<span class="badge green">🟢 多頭持倉</span>'
         elif r["trend"] == -1:
@@ -152,16 +194,15 @@ def generate_html(results):
         else:
             status_badge = '<span class="badge gray">⚪ 觀察中</span>'
 
-        # 急升止盈保護提示
-        tp_info = f'<span class="tp-active">🔥 已啟動 ({r["ema_tp"]:.2f})</span>' if (r["trend"] == 1 and r["high_bias_hit"]) else "-"
+        tp_active = r["trend"] == 1 and r["high_bias_hit"]
+        tp_info = f'<span class="tp-active">🔥 已啟動 ({r["ema_tp"]:.2f})</span>' if tp_active else "-"
 
-        # 最近訊號標籤
         sig_class = "green" if r["last_signal"] == "買入" else ("orange" if r["last_signal"] == "急升止盈" else "red")
         today_tag = ' <span class="new-tag">NEW</span>' if r["is_today_signal"] else ""
         sig_html = f'<span class="badge {sig_class}">{r["last_signal"]}</span>{today_tag}<div class="sub-date">{r["last_signal_date"]}</div>'
 
         rows_html += f"""
-        <tr>
+        <tr data-today="{'1' if r['is_today_signal'] else '0'}" data-status="{status_key}" data-tp="{'1' if tp_active else '0'}" data-search="{r['ticker'].lower()} {r['name'].lower()}">
             <td><strong>{r['ticker']}</strong><div class="sub-name">{r['name']}</div></td>
             <td><strong>{r['price']:.2f}</strong><div style="color:{chg_color};font-size:12px;">{chg_sign}{r['chg_pct']:.2f}%</div></td>
             <td>{status_badge}</td>
@@ -177,17 +218,25 @@ def generate_html(results):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>150/200 支持阻力帶掃描 Dashboard</title>
+    <title>港股通 150/200 支持阻力帶 Dashboard</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }}
-        .container {{ max-width: 1100px; margin: 0 auto; }}
-        .header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 15px; }}
+        .container {{ max-width: 1150px; margin: 0 auto; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 12px; }}
         h1 {{ margin: 0; font-size: 22px; color: #f8fafc; }}
-        .meta {{ font-size: 13px; color: #94a3b8; }}
+        .meta {{ font-size: 13px; color: #94a3b8; margin-top: 4px; }}
+        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }}
+        .card {{ background: #1e293b; padding: 14px; border-radius: 8px; border: 1px solid #334155; }}
+        .card-title {{ font-size: 12px; color: #94a3b8; }}
+        .card-val {{ font-size: 22px; font-weight: 700; margin-top: 4px; }}
+        .controls {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }}
+        input[type="text"] {{ background: #1e293b; border: 1px solid #475569; color: #f8fafc; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 220px; }}
+        .btn {{ background: #1e293b; color: #cbd5e1; border: 1px solid #475569; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }}
+        .btn.active, .btn:hover {{ background: #2563eb; color: #fff; border-color: #2563eb; }}
         .table-wrap {{ overflow-x: auto; background: #1e293b; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; }}
-        th, td {{ padding: 14px 16px; border-bottom: 1px solid #334155; font-size: 14px; }}
-        th {{ background: #0f172a; color: #94a3b8; font-weight: 600; font-size: 13px; }}
+        th, td {{ padding: 12px 14px; border-bottom: 1px solid #334155; font-size: 14px; }}
+        th {{ background: #0f172a; color: #94a3b8; font-weight: 600; font-size: 13px; position: sticky; top: 0; }}
         tr:hover {{ background: #273549; }}
         .sub-name, .sub-date {{ font-size: 12px; color: #94a3b8; margin-top: 2px; }}
         .badge {{ padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-block; }}
@@ -203,11 +252,27 @@ def generate_html(results):
     <div class="container">
         <div class="header">
             <div>
-                <h1>📊 150/200 支持阻力帶 (抗洗盤 + 急升止盈)</h1>
-                <div class="meta">參數：SMA 150/200 | 緩衝 0.6 ATR | 10日斜率 | 35% 乖離啟動 20 EMA 止盈</div>
+                <h1>📊 港股通 150/200 支持阻力帶掃描</h1>
+                <div class="meta">每日 12:15 & 16:20 HKT 自動更新 | 參數：SMA 150/200、0.6 ATR 緩衝、35% 乖離啟動 20 EMA 止盈</div>
             </div>
             <div class="meta">最後更新：{now_str}</div>
         </div>
+
+        <div class="stats">
+            <div class="card"><div class="card-title">掃描港股通總數</div><div class="card-val">{total_cnt}</div></div>
+            <div class="card"><div class="card-title">今日新買入訊號</div><div class="card-val" style="color:#00e676;">{today_buy}</div></div>
+            <div class="card"><div class="card-title">今日賣出 / 止盈</div><div class="card-val" style="color:#ff5252;">{today_sell}</div></div>
+            <div class="card"><div class="card-title">目前多頭持倉數</div><div class="card-val" style="color:#38bdf8;">{bull_cnt}</div></div>
+        </div>
+
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="🔍 搜尋代號或名稱 (如 1810)..." onkeyup="filterTable()">
+            <button class="btn active" onclick="setFilter('all', this)">全部 ({total_cnt})</button>
+            <button class="btn" onclick="setFilter('today', this)">⭐ 今日新訊號 ({today_buy + today_sell})</button>
+            <button class="btn" onclick="setFilter('bull', this)">🟢 多頭持倉 ({bull_cnt})</button>
+            <button class="btn" onclick="setFilter('tp', this)">🔥 急升止盈啟動</button>
+        </div>
+
         <div class="table-wrap">
             <table>
                 <thead>
@@ -221,12 +286,34 @@ def generate_html(results):
                         <th>20 EMA 急升止盈</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="stockTableBody">
                     {rows_html}
                 </tbody>
             </table>
         </div>
     </div>
+
+    <script>
+        let currentFilter = 'all';
+        function setFilter(type, btn) {{
+            currentFilter = type;
+            document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            filterTable();
+        }}
+        function filterTable() {{
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('#stockTableBody tr');
+            rows.forEach(row => {{
+                const matchSearch = row.getAttribute('data-search').includes(query);
+                let matchFilter = true;
+                if (currentFilter === 'today') matchFilter = row.getAttribute('data-today') === '1';
+                else if (currentFilter === 'bull') matchFilter = row.getAttribute('data-status') === 'bull';
+                else if (currentFilter === 'tp') matchFilter = row.getAttribute('data-tp') === '1';
+                row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+            }});
+        }}
+    </script>
 </body>
 </html>
 """
@@ -235,10 +322,7 @@ def generate_html(results):
 
 
 if __name__ == "__main__":
-    data = []
-    for ticker, name in WATCHLIST.items():
-        res = analyze_stock(ticker, name)
-        if res:
-            data.append(res)
-    generate_html(data)
-    print(f"Done! Generated index.html with {len(data)} stocks.")
+    watchlist = get_ggt_watchlist()
+    results = scan_all_stocks(watchlist)
+    generate_html(results)
+    print(f"完成！共分析 {len(results)} 隻港股通股票並生成 index.html。")
