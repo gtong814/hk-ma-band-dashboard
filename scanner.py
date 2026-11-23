@@ -7,9 +7,9 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 1. 策略參數 (與 Pine Script 一致)
+# 1. 策略參數 (與 Pine Script 完全一致)
 # ==========================================
-MA_LEN1 = 150
+MA_LEN1 = 150       # 30週線 (150日線)
 MA_LEN2 = 200
 ATR_MULT = 0.6
 USE_SLOPE = True
@@ -17,6 +17,7 @@ SLOPE_LOOK = 10
 USE_FAST_TP = True
 BIAS_PCT = 35.0
 FAST_TP_LEN = 20
+S2_STRICT = False   # True = 嚴格模式 (額外要求 150線 > 200線)
 BATCH_SIZE = 80
 
 FALLBACK_LIST = {
@@ -28,7 +29,7 @@ FALLBACK_LIST = {
 
 
 def get_ggt_watchlist():
-    """直接從港交所披露易 (HKEXnews) 抓取完整港股通名單 (不會被海外 IP 封鎖)"""
+    """直接從港交所披露易 (HKEXnews) 抓取完整港股通名單"""
     url = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx?t=hk"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -45,7 +46,6 @@ def get_ggt_watchlist():
             if code_el and name_el:
                 code_raw = code_el.get_text(strip=True).zfill(5)
                 name = name_el.get_text(strip=True)
-                # 轉換為 Yahoo Finance 格式 (如 00700 -> 0700.HK)
                 yf_ticker = (code_raw[1:] if code_raw.startswith("0") else code_raw) + ".HK"
                 watchlist[yf_ticker] = name
 
@@ -60,7 +60,7 @@ def get_ggt_watchlist():
 
 
 def analyze_dataframe(ticker, name, df):
-    """套用 150/200 支持阻力帶 + 急升止盈狀態機"""
+    """套用 150/200 支持阻力帶 + 急升止盈 + Stan Weinstein Stage 2"""
     try:
         df = df.dropna(subset=["Close", "High", "Low"]).copy()
         if len(df) < MA_LEN2 + 15:
@@ -86,8 +86,15 @@ def analyze_dataframe(ticker, name, df):
         df["band_bot"] = np.minimum(df["ma1"], df["ma2"])
         df["buy_thresh"] = df["band_top"] + df["atr"] * ATR_MULT
         df["sell_thresh"] = df["band_bot"] - df["atr"] * ATR_MULT
+        df["slope_up"] = df["ma1"] > df["ma1"].shift(SLOPE_LOOK)
         df["slope_ok"] = df["ma1"] >= df["ma1"].shift(SLOPE_LOOK) if USE_SLOPE else True
         df["bias"] = (close - df["ma1"]) / df["ma1"] * 100
+
+        # Stan Weinstein Stage 2 判定
+        if S2_STRICT:
+            df["is_stage2"] = (close > df["ma1"]) & df["slope_up"] & (df["ma1"] > df["ma2"])
+        else:
+            df["is_stage2"] = (close > df["ma1"]) & df["slope_up"]
 
         trend = 0
         high_bias_hit = False
@@ -136,6 +143,7 @@ def analyze_dataframe(ticker, name, df):
         prev_price = closes[-2]
         chg_pct = (latest_price - prev_price) / prev_price * 100
         latest_date = dates[-1]
+        is_stage2_now = bool(df["is_stage2"].iloc[-1])
 
         return {
             "ticker": ticker,
@@ -143,6 +151,7 @@ def analyze_dataframe(ticker, name, df):
             "price": float(latest_price),
             "chg_pct": float(chg_pct),
             "trend": trend,
+            "is_stage2": is_stage2_now,
             "high_bias_hit": high_bias_hit,
             "bias": float(biases[-1]),
             "band_top": float(df["band_top"].iloc[-1]),
@@ -177,7 +186,7 @@ def scan_all_stocks(watchlist):
                     results.append(res)
         except Exception as e:
             print(f"批次下載發生錯誤: {e}")
-        time.sleep(1)  # 稍微停頓避免觸發頻率限制
+        time.sleep(1)
 
     return results
 
@@ -186,14 +195,14 @@ def generate_html(results):
     hkt = timezone(timedelta(hours=8))
     now_str = datetime.now(hkt).strftime("%Y-%m-%d %H:%M HKT")
 
-    # 統計數據
     total_cnt = len(results)
     today_buy = sum(1 for r in results if r["is_today_signal"] and r["last_signal"] == "買入")
     today_sell = sum(1 for r in results if r["is_today_signal"] and r["last_signal"] in ["賣出", "急升止盈"])
     bull_cnt = sum(1 for r in results if r["trend"] == 1)
+    s2_cnt = sum(1 for r in results if r["is_stage2"])
 
-    # 排序：今日訊號 -> 多頭持倉 -> 乖離率由高至低
-    results.sort(key=lambda x: (not x["is_today_signal"], x["trend"] != 1, -x["bias"]))
+    # 排序：今日訊號 -> Stage 2 -> 多頭持倉 -> 乖離率由高至低
+    results.sort(key=lambda x: (not x["is_today_signal"], not x["is_stage2"], x["trend"] != 1, -x["bias"]))
 
     rows_html = ""
     for r in results:
@@ -208,6 +217,10 @@ def generate_html(results):
         else:
             status_badge = '<span class="badge gray">⚪ 觀察中</span>'
 
+        # Stage 2 標記與整列淡綠色背景
+        row_class = "stage2-row" if r["is_stage2"] else ""
+        s2_badge = '<span class="badge s2">🌿 Stage 2</span>' if r["is_stage2"] else '<span style="color:#64748b;">-</span>'
+
         tp_active = r["trend"] == 1 and r["high_bias_hit"]
         tp_info = f'<span class="tp-active">🔥 已啟動 ({r["ema_tp"]:.2f})</span>' if tp_active else "-"
 
@@ -216,9 +229,10 @@ def generate_html(results):
         sig_html = f'<span class="badge {sig_class}">{r["last_signal"]}</span>{today_tag}<div class="sub-date">{r["last_signal_date"]}</div>'
 
         rows_html += f"""
-        <tr data-today="{'1' if r['is_today_signal'] else '0'}" data-status="{status_key}" data-tp="{'1' if tp_active else '0'}" data-search="{r['ticker'].lower()} {r['name'].lower()}">
+        <tr class="{row_class}" data-today="{'1' if r['is_today_signal'] else '0'}" data-status="{status_key}" data-s2="{'1' if r['is_stage2'] else '0'}" data-tp="{'1' if tp_active else '0'}" data-search="{r['ticker'].lower()} {r['name'].lower()}">
             <td><strong>{r['ticker']}</strong><div class="sub-name">{r['name']}</div></td>
             <td><strong>{r['price']:.2f}</strong><div style="color:{chg_color};font-size:12px;">{chg_sign}{r['chg_pct']:.2f}%</div></td>
+            <td>{s2_badge}</td>
             <td>{status_badge}</td>
             <td>{sig_html}</td>
             <td>{r['band_bot']:.2f} ~ {r['band_top']:.2f}</td>
@@ -232,10 +246,10 @@ def generate_html(results):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>港股通 150/200 支持阻力帶 Dashboard</title>
+    <title>港股通 150/200 支持阻力帶 + Stage 2 Dashboard</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }}
-        .container {{ max-width: 1150px; margin: 0 auto; }}
+        .container {{ max-width: 1220px; margin: 0 auto; }}
         .header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 12px; }}
         h1 {{ margin: 0; font-size: 22px; color: #f8fafc; }}
         .meta {{ font-size: 13px; color: #94a3b8; margin-top: 4px; }}
@@ -252,9 +266,13 @@ def generate_html(results):
         th, td {{ padding: 12px 14px; border-bottom: 1px solid #334155; font-size: 14px; }}
         th {{ background: #0f172a; color: #94a3b8; font-weight: 600; font-size: 13px; position: sticky; top: 0; }}
         tr:hover {{ background: #273549; }}
+        /* Stan Weinstein Stage 2 淡綠色背景 */
+        tr.stage2-row {{ background: rgba(0, 200, 83, 0.10); }}
+        tr.stage2-row:hover {{ background: rgba(0, 200, 83, 0.18); }}
         .sub-name, .sub-date {{ font-size: 12px; color: #94a3b8; margin-top: 2px; }}
         .badge {{ padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-block; }}
         .badge.green {{ background: rgba(0, 200, 83, 0.2); color: #00e676; border: 1px solid #00c853; }}
+        .badge.s2 {{ background: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid #10b981; }}
         .badge.red {{ background: rgba(255, 23, 68, 0.2); color: #ff5252; border: 1px solid #ff1744; }}
         .badge.orange {{ background: rgba(255, 152, 0, 0.2); color: #ffb74d; border: 1px solid #ff9800; }}
         .badge.gray {{ background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }}
@@ -266,14 +284,15 @@ def generate_html(results):
     <div class="container">
         <div class="header">
             <div>
-                <h1>📊 港股通 150/200 支持阻力帶掃描</h1>
-                <div class="meta">每日 12:15 & 16:20 HKT 自動更新 | 參數：SMA 150/200、0.6 ATR 緩衝、35% 乖離啟動 20 EMA 止盈</div>
+                <h1>📊 港股通 150/200 支持阻力帶 + Stage 2 掃描</h1>
+                <div class="meta">每日 12:15 & 16:20 HKT 自動更新 | 綠色底色 = Stan Weinstein Stage 2 上升期</div>
             </div>
             <div class="meta">最後更新：{now_str}</div>
         </div>
 
         <div class="stats">
             <div class="card"><div class="card-title">掃描港股通總數</div><div class="card-val">{total_cnt}</div></div>
+            <div class="card"><div class="card-title">🌿 Stage 2 上升期</div><div class="card-val" style="color:#34d399;">{s2_cnt}</div></div>
             <div class="card"><div class="card-title">今日新買入訊號</div><div class="card-val" style="color:#00e676;">{today_buy}</div></div>
             <div class="card"><div class="card-title">今日賣出 / 止盈</div><div class="card-val" style="color:#ff5252;">{today_sell}</div></div>
             <div class="card"><div class="card-title">目前多頭持倉數</div><div class="card-val" style="color:#38bdf8;">{bull_cnt}</div></div>
@@ -283,6 +302,7 @@ def generate_html(results):
             <input type="text" id="searchInput" placeholder="🔍 搜尋代號或名稱 (如 1810)..." onkeyup="filterTable()">
             <button class="btn active" onclick="setFilter('all', this)">全部 ({total_cnt})</button>
             <button class="btn" onclick="setFilter('today', this)">⭐ 今日新訊號 ({today_buy + today_sell})</button>
+            <button class="btn" onclick="setFilter('s2', this)">🌿 Stage 2 ({s2_cnt})</button>
             <button class="btn" onclick="setFilter('bull', this)">🟢 多頭持倉 ({bull_cnt})</button>
             <button class="btn" onclick="setFilter('tp', this)">🔥 急升止盈啟動</button>
         </div>
@@ -293,6 +313,7 @@ def generate_html(results):
                     <tr>
                         <th>股票</th>
                         <th>現價 / 升跌</th>
+                        <th>Weinstein 階段</th>
                         <th>目前趨勢</th>
                         <th>最近訊號</th>
                         <th>150/200 支持阻力帶</th>
@@ -322,6 +343,7 @@ def generate_html(results):
                 const matchSearch = row.getAttribute('data-search').includes(query);
                 let matchFilter = true;
                 if (currentFilter === 'today') matchFilter = row.getAttribute('data-today') === '1';
+                else if (currentFilter === 's2') matchFilter = row.getAttribute('data-s2') === '1';
                 else if (currentFilter === 'bull') matchFilter = row.getAttribute('data-status') === 'bull';
                 else if (currentFilter === 'tp') matchFilter = row.getAttribute('data-tp') === '1';
                 row.style.display = (matchSearch && matchFilter) ? '' : 'none';
