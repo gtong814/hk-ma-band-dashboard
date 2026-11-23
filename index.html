@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>150/200 支持阻力帶掃描 Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
+        h1 { margin: 0; font-size: 22px; color: #f8fafc; }
+        .meta { font-size: 13px; color: #94a3b8; }
+        .table-wrap { overflow-x: auto; background: #1e293b; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 14px 16px; border-bottom: 1px solid #334155; font-size: 14px; }
+        th { background: #0f172a; color: #94a3b8; font-weight: 600; font-size: 13px; }
+        tr:hover { background: #273549; }
+        .sub-name, .sub-date { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+        .badge { padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-block; }
+        .badge.green { background: rgba(0, 200, 83, 0.2); color: #00e676; border: 1px solid #00c853; }
+        .badge.red { background: rgba(255, 23, 68, 0.2); color: #ff5252; border: 1px solid #ff1744; }
+        .badge.orange { background: rgba(255, 152, 0, 0.2); color: #ffb74d; border: 1px solid #ff9800; }
+        .badge.gray { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+        .new-tag { background: #eab308; color: #000; font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 4px; margin-left: 4px; vertical-align: middle; }
+        .tp-active { color: #ffb74d; font-weight: 600; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>📊 150/200 支持阻力帶 (抗洗盤 + 急升止盈)</h1>
+                <div class="meta">參數：SMA 150/200 | 緩衝 0.6 ATR | 10日斜率 | 35% 乖離啟動 20 EMA 止盈</div>
+            </div>
+            <div class="meta">最後更新：2026-11-23 11:30 HKT</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>股票</th>
+                        <th>現價 / 升跌</th>
+                        <th>目前趨勢</th>
+                        <th>最近訊號</th>
+                        <th>150/200 支持阻力帶</th>
+                        <th>150線乖離</th>
+                        <th>20 EMA 急升止盈</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+        <tr>
+            <td><strong>1810.HK</strong><div class="sub-name">小米集團-W</div></td>
+            <td><strong>27.28</strong><div style="color:#ff1744;font-size:12px;">-1.30%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2025-10-14</div></td>
+            <td>27.45 ~ 29.02</td>
+            <td>-0.6%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>2800.HK</strong><div class="sub-name">盈富基金</div></td>
+            <td><strong>22.30</strong><div style="color:#ff1744;font-size:12px;">-1.06%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-09-11</div></td>
+            <td>24.65 ~ 24.84</td>
+            <td>-9.5%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>3690.HK</strong><div class="sub-name">美團-W</div></td>
+            <td><strong>64.25</strong><div style="color:#ff1744;font-size:12px;">-3.38%</div></td>
+            <td><span class="badge gray">⚪ 觀察中</span></td>
+            <td><span class="badge red">無</span><div class="sub-date">-</div></td>
+            <td>78.58 ~ 79.85</td>
+            <td>-18.2%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>1686.HK</strong><div class="sub-name">新意網集團</div></td>
+            <td><strong>4.10</strong><div style="color:#ff1744;font-size:12px;">-2.03%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-06-08</div></td>
+            <td>5.19 ~ 5.40</td>
+            <td>-21.0%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>0700.HK</strong><div class="sub-name">騰訊控股</div></td>
+            <td><strong>337.80</strong><div style="color:#ff1744;font-size:12px;">-1.80%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-02-04</div></td>
+            <td>439.86 ~ 459.78</td>
+            <td>-23.2%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>3033.HK</strong><div class="sub-name">南方恒生科技</div></td>
+            <td><strong>3.38</strong><div style="color:#ff1744;font-size:12px;">-1.57%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-02-02</div></td>
+            <td>4.43 ~ 4.57</td>
+            <td>-23.7%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>9988.HK</strong><div class="sub-name">阿里巴巴-W</div></td>
+            <td><strong>81.45</strong><div style="color:#ff1744;font-size:12px;">-2.28%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-03-02</div></td>
+            <td>112.60 ~ 118.90</td>
+            <td>-27.7%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>1211.HK</strong><div class="sub-name">比亞迪股份</div></td>
+            <td><strong>61.00</strong><div style="color:#ff1744;font-size:12px;">-2.17%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-05-15</div></td>
+            <td>84.49 ~ 88.31</td>
+            <td>-27.8%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>0981.HK</strong><div class="sub-name">中芯國際</div></td>
+            <td><strong>47.88</strong><div style="color:#ff1744;font-size:12px;">-2.52%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-07-30</div></td>
+            <td>65.41 ~ 66.37</td>
+            <td>-27.9%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>9660.HK</strong><div class="sub-name">地平線機械人</div></td>
+            <td><strong>3.06</strong><div style="color:#ff1744;font-size:12px;">-2.08%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-03-02</div></td>
+            <td>4.78 ~ 5.51</td>
+            <td>-36.2%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>2858.HK</strong><div class="sub-name">易鑫集團</div></td>
+            <td><strong>0.68</strong><div style="color:#ff1744;font-size:12px;">-0.74%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-03-06</div></td>
+            <td>1.26 ~ 1.51</td>
+            <td>-46.3%</td>
+            <td>-</td>
+        </tr>
+        
+        <tr>
+            <td><strong>1888.HK</strong><div class="sub-name">建滔積層板</div></td>
+            <td><strong>22.80</strong><div style="color:#ff1744;font-size:12px;">-0.70%</div></td>
+            <td><span class="badge red">🔴 空頭/觀望</span></td>
+            <td><span class="badge red">賣出</span><div class="sub-date">2026-10-26</div></td>
+            <td>40.35 ~ 46.93</td>
+            <td>-51.4%</td>
+            <td>-</td>
+        </tr>
+        
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
