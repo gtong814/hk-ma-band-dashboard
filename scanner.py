@@ -1,5 +1,6 @@
 import time
-import akshare as ak
+import requests
+from bs4 import BeautifulSoup
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -16,9 +17,8 @@ SLOPE_LOOK = 10
 USE_FAST_TP = True
 BIAS_PCT = 35.0
 FAST_TP_LEN = 20
-BATCH_SIZE = 80  # 每次批量下載股票數量
+BATCH_SIZE = 80
 
-# 備用名單 (萬一外部接口暫時維護時使用)
 FALLBACK_LIST = {
     "1810.HK": "小米集團-W", "1888.HK": "建滔積層板", "0700.HK": "騰訊控股",
     "9988.HK": "阿里巴巴-W", "3690.HK": "美團-W", "1211.HK": "比亞迪股份",
@@ -28,20 +28,34 @@ FALLBACK_LIST = {
 
 
 def get_ggt_watchlist():
-    """自動抓取最新港股通成分股並轉換為 Yahoo Finance 格式 (如 00700 -> 0700.HK)"""
+    """直接從港交所披露易 (HKEXnews) 抓取完整港股通名單 (不會被海外 IP 封鎖)"""
+    url = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx?t=hk"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
-        df_ggt = ak.stock_hk_ggt_components_em()
+        resp = requests.get(url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
         watchlist = {}
-        for _, row in df_ggt.iterrows():
-            code_raw = str(row["代码"]).strip().zfill(5)
-            # Yahoo Finance 港股為 4 位數 (去掉開頭的 0)
-            yf_ticker = (code_raw[1:] if code_raw.startswith("0") else code_raw) + ".HK"
-            name = str(row["名称"]).strip()
-            watchlist[yf_ticker] = name
-        print(f"成功獲取港股通名單，共 {len(watchlist)} 隻股票。")
-        return watchlist
+
+        for row in soup.select("table.table tbody tr"):
+            code_el = row.select_one("td.col-stock-code .mobile-list-body")
+            name_el = row.select_one("td.col-stock-name .mobile-list-body")
+            if code_el and name_el:
+                code_raw = code_el.get_text(strip=True).zfill(5)
+                name = name_el.get_text(strip=True)
+                # 轉換為 Yahoo Finance 格式 (如 00700 -> 0700.HK)
+                yf_ticker = (code_raw[1:] if code_raw.startswith("0") else code_raw) + ".HK"
+                watchlist[yf_ticker] = name
+
+        if len(watchlist) > 50:
+            print(f"成功從港交所獲取港股通名單，共 {len(watchlist)} 隻股票。")
+            return watchlist
+        else:
+            raise ValueError(f"抓取數量異常 ({len(watchlist)})")
     except Exception as e:
-        print(f"獲取港股通名單失敗 ({e})，改用備用名單。")
+        print(f"從港交所獲取名單失敗 ({e})，改用備用名單。")
         return FALLBACK_LIST
 
 
