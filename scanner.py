@@ -25,7 +25,6 @@ BENCHMARK_TICKER = "2800.HK"
 BATCH_SIZE = 80
 SECTOR_CACHE_FILE = "sector_cache.json"
 
-# 行業英文轉繁體中文對照表
 SECTOR_ZH = {
     "Technology": "科技",
     "Financial Services": "金融",
@@ -91,7 +90,7 @@ def load_and_update_sectors(tickers):
 
     missing = [t for t in tickers if t not in cache]
     if missing:
-        print(f"需要查詢 {len(missing)} 隻股票的行業分類 (首次執行需時約 1-2 分鐘)...")
+        print(f"需要查詢 {len(missing)} 隻股票的行業分類...")
 
         def fetch_one(t):
             try:
@@ -282,13 +281,11 @@ def scan_all_stocks(watchlist):
         time.sleep(1)
 
     if results:
-        # 1. 計算個股 RS Rating (1-99 百分位)
         scores = pd.Series([r["raw_rs_score"] for r in results])
         ranks = scores.rank(pct=True)
         for idx, r in enumerate(results):
             r["rs_rating"] = int(max(1, min(99, round(ranks.iloc[idx] * 99))))
 
-        # 2. 計算行業 RS (依各行業平均個股 RS 評分排名 1-99)
         df_sec = pd.DataFrame([{"sec": r["sector_zh"], "rs": r["rs_rating"]} for r in results])
         sec_means = df_sec.groupby("sec")["rs"].mean()
         sec_ranks = sec_means.rank(pct=True)
@@ -311,7 +308,6 @@ def generate_html(results):
     s2_cnt = sum(1 for r in results if r["is_stage2"])
     rs80_cnt = sum(1 for r in results if r["rs_rating"] >= 80)
 
-    # 排序：今日訊號 -> Stage 2 -> 個股 RS 由高至低
     results.sort(key=lambda x: (not x["is_today_signal"], not x["is_stage2"], -x["rs_rating"]))
 
     rows_html = ""
@@ -330,17 +326,14 @@ def generate_html(results):
         row_class = "stage2-row" if r["is_stage2"] else ""
         s2_badge = '<span class="badge s2">🌿 Stage 2</span>' if r["is_stage2"] else '<span style="color:#64748b;">-</span>'
 
-        # 個股 RS 評分
         rs_val = r["rs_rating"]
         rs_class = "green" if rs_val >= 80 else ("blue" if rs_val >= 60 else "gray")
         rs_html = f'<span class="badge {rs_class}">RS {rs_val}</span>'
 
-        # 獨立欄位：vs 2800.HK (Mansfield RS %)
         mrs_val = r["mansfield_rs"]
         mrs_color = "#00e676" if mrs_val >= 0 else "#ff5252"
         mrs_html = f'<strong style="color:{mrs_color};">{mrs_val:+.1f}%</strong>'
 
-        # 獨立欄位：行業 / 行業 RS
         sec_rs = r["sector_rs"]
         sec_class = "green" if sec_rs >= 70 else ("blue" if sec_rs >= 40 else "gray")
         sec_html = f'<div>{r["sector_zh"]}</div><span class="badge {sec_class}" style="margin-top:3px;">行業 RS {sec_rs}</span>'
@@ -374,6 +367,7 @@ def generate_html(results):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>港股通 150/200 支持阻力帶 + Stage 2 + 行業RS Dashboard</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }}
         .container {{ max-width: 1380px; margin: 0 auto; }}
@@ -433,6 +427,7 @@ def generate_html(results):
             <button class="btn" onclick="setFilter('rs80', this)">💪 RS ≥ 80 ({rs80_cnt})</button>
             <button class="btn" onclick="setFilter('bull', this)">🟢 多頭持倉 ({bull_cnt})</button>
             <button class="btn" onclick="setFilter('tp', this)">🔥 急升止盈啟動</button>
+            <button class="btn" style="background:#16a34a; border-color:#16a34a; color:#fff;" onclick="exportToExcel()">📥 下載 Excel (.xlsx)</button>
         </div>
 
         <div class="table-wrap">
@@ -480,6 +475,29 @@ def generate_html(results):
                 else if (currentFilter === 'tp') matchFilter = row.getAttribute('data-tp') === '1';
                 row.style.display = (matchSearch && matchFilter) ? '' : 'none';
             }});
+        }}
+        function exportToExcel() {{
+            const table = document.querySelector('table');
+            const data = [];
+            const headers = [];
+            table.querySelectorAll('thead th').forEach(th => headers.push(th.innerText.trim()));
+            data.push(headers);
+
+            table.querySelectorAll('#stockTableBody tr').forEach(row => {{
+                if (row.style.display !== 'none') {{
+                    const rowData = [];
+                    row.querySelectorAll('td').forEach(td => {{
+                        rowData.push(td.innerText.replace(/\n+/g, ' ').trim());
+                    }});
+                    data.push(rowData);
+                }}
+            }});
+
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "港股通掃描結果");
+            const today = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, '港股通掃描_' + today + '.xlsx');
         }}
     </script>
 </body>
