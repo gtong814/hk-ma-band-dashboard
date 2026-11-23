@@ -1,10 +1,12 @@
-name: Daily HK Stock Scan
+name: Daily HK Stock Scan (GGT)
 
 on:
   schedule:
-    # 星期一至五 16:20 HKT (UTC 08:20) 自動執行
+    # 星期一至五 12:15 HKT (上午收市後更新)
+    - cron: '15 4 * * 1-5'
+    # 星期一至五 16:20 HKT (下午收市後更新)
     - cron: '20 8 * * 1-5'
-  workflow_dispatch: # 允許手動點擊按鈕隨時測試
+  workflow_dispatch: # 允許手動隨時觸發
 
 permissions:
   contents: write
@@ -32,4 +34,4 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update dashboard $(date +'%Y-%m-%d')" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update GGT dashboard $(date +'%Y-%m-%d %H:%M')" && git push)
